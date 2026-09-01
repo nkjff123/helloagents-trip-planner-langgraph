@@ -76,6 +76,19 @@ class SearchStrategy(BaseModel):
     )
 
 
+class CuratedAttractions(BaseModel):
+    """LLM 从候选池中精选的景点 ID 列表"""
+    selected_poi_ids: List[str] = Field(
+        ...,
+        description="从候选池中选出的符合用户喜好和游玩天数的景点 POI ID 列表",
+        min_length=1
+    )
+    reasoning: Optional[str] = Field(
+        default=None,
+        description="筛选理由与考量简述"
+    )
+
+
 class MealAssignment(BaseModel):
     """单餐规划决策"""
     type: str = Field(..., description="餐饮类型: breakfast, lunch, dinner, snack")
