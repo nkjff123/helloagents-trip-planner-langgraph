@@ -201,8 +201,10 @@ def format_synthesize_itinerary_messages(state: TripPlannerState) -> List[Dict[s
     weather_list = state.get("raw_weather", [])
     weather_lines = []
     for w in weather_list:
+        wind_info = getattr(w, "wind_power", "") or getattr(w, "wind_direction", "")
+        wind_str = f" | 风力: {wind_info}" if wind_info else ""
         weather_lines.append(
-            f"- 日期: {w.date} | 天气: {w.day_weather}/{w.night_weather} | 气温: {w.night_temp}~{w.day_temp}℃ | 风力: {w.day_wind}"
+            f"- 日期: {w.date} | 天气: {w.day_weather}/{w.night_weather} | 气温: {w.night_temp}~{w.day_temp}℃{wind_str}"
         )
     weather_text = "\n".join(weather_lines) if weather_lines else "（未获取到实时预报，请按舒适晴好天气做参考）"
 
