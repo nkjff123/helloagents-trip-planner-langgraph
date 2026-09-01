@@ -7,10 +7,15 @@ from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
 # 加载环境变量
-# 首先尝试加载当前目录的.env
+# 1. 尝试加载当前工作目录的.env
 load_dotenv()
 
-# 然后尝试加载HelloAgents的.env(如果存在)
+# 2. 尝试加载 backend 根目录的.env
+backend_env = Path(__file__).resolve().parent.parent / ".env"
+if backend_env.exists():
+    load_dotenv(backend_env, override=False)
+
+# 3. 尝试加载HelloAgents的.env(如果存在)
 helloagents_env = Path(__file__).parent.parent.parent.parent / "HelloAgents" / ".env"
 if helloagents_env.exists():
     load_dotenv(helloagents_env, override=False)  # 不覆盖已有的环境变量
