@@ -416,11 +416,42 @@ def extract_photos_from_poi(poi_dict: Dict[str, Any]) -> List[str]:
     return photos
 
 
+# ==================== POI 清洗规则 ====================
+
+# 强特征附属设施与非游览噪点黑名单
+EXCLUDE_FACILITIES_KEYWORDS = [
+    "停车场", "售票处", "公厕", "公共厕所", "卫生间", "洗手间",
+    "游客中心", "游客服务中心", "景区管理", "管委会", "管理处",
+    "村民委员会", "村委会", "警务室", "派出所", "公安局",
+    "充电站", "充电桩", "小卖部", "便利店", "自动售卖机",
+    "服务区", "收费站", "加油站", "加气站", "公交站", "地铁站", "驿站",
+    "家具", "材料", "五金", "批发", "门市部", "包装", "公司", "厂"
+]
+
+
+def is_valid_candidate_poi(name: str, typecode: Optional[Union[str, int]], allowed_prefixes: tuple) -> bool:
+    """快速检查 POI 名称是否包含黑名单关键词，以及 typecode 是否符合大类白名单"""
+    if not name:
+        return False
+    # 1. 命中设施黑名单则直接剔除
+    if any(kw in name for kw in EXCLUDE_FACILITIES_KEYWORDS):
+        return False
+    # 2. 若存在高德 typecode，严格匹配行业大类前缀
+    if typecode:
+        tc = str(typecode).strip()
+        if not tc.startswith(allowed_prefixes):
+            return False
+    return True
+
+
 def poi_to_attraction_candidate(poi: Dict[str, Any]) -> Optional[AttractionCandidate]:
     """将原始 POI 字典转换为无伪造默认值的 AttractionCandidate (经纬度允许延迟按需补齐)"""
     poi_id = poi.get("id") or poi.get("poi_id")
     name = poi.get("name")
     if not poi_id or not name:
+        return None
+    typecode = poi.get("typecode")
+    if not is_valid_candidate_poi(str(name), typecode, ("11", "1202", "1412")):
         return None
     loc = parse_location_str(poi.get("location"))
 
@@ -468,6 +499,9 @@ def poi_to_hotel_candidate(poi: Dict[str, Any]) -> Optional[HotelCandidate]:
     name = poi.get("name")
     if not poi_id or not name:
         return None
+    typecode = poi.get("typecode")
+    if not is_valid_candidate_poi(str(name), typecode, ("10",)):
+        return None
     loc = parse_location_str(poi.get("location"))
 
     biz_ext = poi.get("biz_ext") if isinstance(poi.get("biz_ext"), dict) else {}
@@ -500,6 +534,9 @@ def poi_to_restaurant_candidate(poi: Dict[str, Any]) -> Optional[RestaurantCandi
     poi_id = poi.get("id") or poi.get("poi_id")
     name = poi.get("name")
     if not poi_id or not name:
+        return None
+    typecode = poi.get("typecode")
+    if not is_valid_candidate_poi(str(name), typecode, ("05",)):
         return None
     loc = parse_location_str(poi.get("location"))
 

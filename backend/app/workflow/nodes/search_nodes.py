@@ -68,7 +68,8 @@ def search_attractions(state: TripPlannerState) -> Dict[str, Any]:
     for kw in keywords:
         try:
             items = amap_service.search_attraction_candidates(keywords=kw, city=city)
-            for item in items:
+            # 每个关键词取前 3 个最相关优质项，防止候选池无限膨胀
+            for item in items[:3]:
                 if item.poi_id not in candidates_map:
                     candidates_map[item.poi_id] = item
         except Exception as e:
@@ -82,7 +83,7 @@ def search_attractions(state: TripPlannerState) -> Dict[str, Any]:
         for fkw in fallback_keywords:
             try:
                 items = amap_service.search_attraction_candidates(keywords=fkw, city=city)
-                for item in items:
+                for item in items[:3]:
                     if item.poi_id not in candidates_map:
                         candidates_map[item.poi_id] = item
                 if candidates_map:
@@ -111,7 +112,8 @@ def search_hotels(state: TripPlannerState) -> Dict[str, Any]:
 
     try:
         items = amap_service.search_hotel_candidates(keywords=hotel_kw, city=city)
-        for item in items:
+        # 取前 6 个核心优质酒店，避免候选池堆叠
+        for item in items[:6]:
             if item.poi_id not in candidates_map:
                 candidates_map[item.poi_id] = item
     except Exception as e:
@@ -127,7 +129,7 @@ def search_hotels(state: TripPlannerState) -> Dict[str, Any]:
                 continue
             try:
                 items = amap_service.search_hotel_candidates(keywords=fkw, city=city)
-                for item in items:
+                for item in items[:6]:
                     if item.poi_id not in candidates_map:
                         candidates_map[item.poi_id] = item
                 if candidates_map:
@@ -161,7 +163,8 @@ def search_restaurants(state: TripPlannerState) -> Dict[str, Any]:
     for kw in keywords:
         try:
             items = amap_service.search_restaurant_candidates(keywords=kw, city=city)
-            for item in items:
+            # 每个餐饮关键词取前 4 项代表性特色餐馆，控制在 8 家左右
+            for item in items[:4]:
                 if item.poi_id not in candidates_map:
                     candidates_map[item.poi_id] = item
         except Exception as e:
@@ -175,7 +178,7 @@ def search_restaurants(state: TripPlannerState) -> Dict[str, Any]:
         for fkw in fallback_rest_kws:
             try:
                 items = amap_service.search_restaurant_candidates(keywords=fkw, city=city)
-                for item in items:
+                for item in items[:4]:
                     if item.poi_id not in candidates_map:
                         candidates_map[item.poi_id] = item
                 if candidates_map:

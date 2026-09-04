@@ -1,5 +1,6 @@
 """旅行规划 API 路由 (LangGraph 工作流驱动)"""
 
+import asyncio
 from fastapi import APIRouter, HTTPException, status
 from loguru import logger
 from ...models.schemas import (
@@ -36,7 +37,8 @@ async def plan_trip(request: TripRequest):
     )
 
     try:
-        final_state = run_trip_planner_workflow(request)
+        # 将耗时同步工作流委托至线程池，彻底解除主事件循环锁定
+        final_state = await asyncio.to_thread(run_trip_planner_workflow, request)
 
         if final_state.get("is_failed"):
             error_msg = (

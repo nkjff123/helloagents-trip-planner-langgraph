@@ -181,6 +181,71 @@ class TestSearchNodes(unittest.TestCase):
         self.assertIn("candidate_restaurants", result)
         self.assertIn("REST_01", result["candidate_restaurants"])
 
+    @patch("app.workflow.nodes.search_nodes.get_amap_service")
+    def test_search_nodes_top_k_truncation(self, mock_get_amap):
+        """测试检索节点按关键词 Top-K 裁剪防候选池无序膨胀 (用例 2)"""
+        mock_service = MagicMock()
+        mock_get_amap.return_value = mock_service
+
+        # 1. 景点 Mock：每个关键词返回 10 个候选，单关键词应严格截取前 3 个
+        mock_attractions_raw = [
+            AttractionCandidate(
+                poi_id=f"ATTR_{i:02d}",
+                name=f"景区_{i:02d}",
+                type="风景名胜",
+                location=Location(longitude=120.0 + i * 0.01, latitude=30.0),
+            )
+            for i in range(10)
+        ]
+        mock_service.search_attraction_candidates.return_value = mock_attractions_raw
+
+        single_kw_state: TripPlannerState = {
+            "city": "杭州",
+            "strategy": SearchStrategy(
+                attraction_keywords=["西湖"],
+                hotel_keyword="酒店",
+                restaurant_keywords=["特色菜"],
+            ),
+        }
+        attr_result = search_attractions(single_kw_state)
+        # 单个关键词原本 10 个，截断后候选池数量必须为 3
+        self.assertEqual(len(attr_result["candidate_attractions"]), 3)
+        self.assertIn("ATTR_00", attr_result["candidate_attractions"])
+        self.assertIn("ATTR_01", attr_result["candidate_attractions"])
+        self.assertIn("ATTR_02", attr_result["candidate_attractions"])
+        self.assertNotIn("ATTR_03", attr_result["candidate_attractions"])
+
+        # 2. 酒店 Mock：返回 15 个候选，严格截取前 6 个
+        mock_hotels_raw = [
+            HotelCandidate(
+                poi_id=f"HOTEL_{i:02d}",
+                name=f"酒店_{i:02d}",
+                location=Location(longitude=120.0, latitude=30.0),
+            )
+            for i in range(15)
+        ]
+        mock_service.search_hotel_candidates.return_value = mock_hotels_raw
+        hotel_result = search_hotels(single_kw_state)
+        self.assertEqual(len(hotel_result["candidate_hotels"]), 6)
+        self.assertIn("HOTEL_05", hotel_result["candidate_hotels"])
+        self.assertNotIn("HOTEL_06", hotel_result["candidate_hotels"])
+
+        # 3. 餐饮 Mock：返回 12 个候选，单关键词严格截取前 4 个
+        mock_rests_raw = [
+            RestaurantCandidate(
+                poi_id=f"REST_{i:02d}",
+                name=f"餐厅_{i:02d}",
+                cuisine="当地特色",
+                location=Location(longitude=120.0, latitude=30.0),
+            )
+            for i in range(12)
+        ]
+        mock_service.search_restaurant_candidates.return_value = mock_rests_raw
+        rest_result = search_restaurants(single_kw_state)
+        self.assertEqual(len(rest_result["candidate_restaurants"]), 4)
+        self.assertIn("REST_03", rest_result["candidate_restaurants"])
+        self.assertNotIn("REST_04", rest_result["candidate_restaurants"])
+
 
 if __name__ == "__main__":
     unittest.main()

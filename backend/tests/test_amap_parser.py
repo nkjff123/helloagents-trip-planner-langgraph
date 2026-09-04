@@ -234,15 +234,73 @@ class TestAmapParser(unittest.TestCase):
         self.assertEqual(cand.name, "许慎文化园")
         self.assertIsNone(cand.location, "初筛阶段无经纬度时允许 location 为 None，由还原阶段按需补齐")
 
-        # 酒店无坐标同样保留
-        hotel_cand = poi_to_hotel_candidate(mcp_poi)
+        # 酒店无坐标同样保留 (使用对应住宿类 typecode)
+        hotel_poi = {
+            "id": "H001",
+            "name": "漯河喜来登大酒店",
+            "address": "河南省漯河市嵩山路",
+            "typecode": "100100",
+        }
+        hotel_cand = poi_to_hotel_candidate(hotel_poi)
         self.assertIsNotNone(hotel_cand)
         self.assertIsNone(hotel_cand.location)
 
-        # 餐饮无坐标同样保留
-        rest_cand = poi_to_restaurant_candidate(mcp_poi)
+        # 餐饮无坐标同样保留 (使用对应餐饮类 typecode)
+        rest_poi = {
+            "id": "R001",
+            "name": "北舞渡胡辣汤总店",
+            "address": "河南省漯河市舞阳县北舞渡镇",
+            "typecode": "050100",
+        }
+        rest_cand = poi_to_restaurant_candidate(rest_poi)
         self.assertIsNotNone(rest_cand)
         self.assertIsNone(rest_cand.location)
+
+    def test_poi_filtering_and_blacklist(self):
+        """测试 POI 黑名单关键词与 typecode 类别清洗 (用例 1)"""
+        # 1. 景区候选过滤测试：公厕、停车场、售票处、包装公司均应被剔除
+        noisy_pois = [
+            {"id": "P1", "name": "许慎文化园-公厕", "typecode": "200300"},
+            {"id": "P2", "name": "小商桥生态停车场", "typecode": "150904"},
+            {"id": "P3", "name": "沙澧河风景区售票处", "typecode": "070306"},
+            {"id": "P4", "name": "漯河市某包装材料有限公司", "typecode": "170200"},
+            {"id": "P5", "name": "便民公共卫生间", "typecode": "110200"},  # 虽然 typecode 借挂景区，但命中黑名单
+            {"id": "P6", "name": "许慎文化园", "typecode": "110202"},  # 真实核心景区
+            {"id": "P7", "name": "漯河市博物馆", "typecode": "141200"},  # 博物馆文化场馆
+        ]
+
+        results = [poi_to_attraction_candidate(p) for p in noisy_pois]
+        valid_attractions = [r for r in results if r is not None]
+
+        # 仅 P6 与 P7 应当合法保留
+        self.assertEqual(len(valid_attractions), 2)
+        valid_ids = [a.poi_id for a in valid_attractions]
+        self.assertIn("P6", valid_ids)
+        self.assertIn("P7", valid_ids)
+        self.assertEqual(valid_attractions[0].name, "许慎文化园")
+        self.assertEqual(valid_attractions[1].name, "漯河市博物馆")
+
+        # 2. 酒店过滤测试：非住宿类或黑名单设施一票否决
+        noisy_hotels = [
+            {"id": "H1", "name": "某快捷酒店停车场", "typecode": "100100"},  # 命中黑名单
+            {"id": "H2", "name": "许慎文化园", "typecode": "110202"},  # 景区不能误入酒店池
+            {"id": "H3", "name": "汉庭酒店(漯河火车站店)", "typecode": "100100"},  # 真实合法酒店
+        ]
+        hotel_results = [poi_to_hotel_candidate(p) for p in noisy_hotels]
+        valid_hotels = [h for h in hotel_results if h is not None]
+        self.assertEqual(len(valid_hotels), 1)
+        self.assertEqual(valid_hotels[0].name, "汉庭酒店(漯河火车站店)")
+
+        # 3. 餐饮过滤测试：非餐饮类或黑名单设施一票否决
+        noisy_restaurants = [
+            {"id": "R1", "name": "胡辣汤小吃店公厕", "typecode": "050100"},  # 命中黑名单
+            {"id": "R2", "name": "如家酒店", "typecode": "100100"},  # 酒店不能误入餐饮池
+            {"id": "R3", "name": "北舞渡胡辣汤特色餐馆", "typecode": "050100"},  # 真实特色餐饮
+        ]
+        rest_results = [poi_to_restaurant_candidate(p) for p in noisy_restaurants]
+        valid_rests = [r for r in rest_results if r is not None]
+        self.assertEqual(len(valid_rests), 1)
+        self.assertEqual(valid_rests[0].name, "北舞渡胡辣汤特色餐馆")
 
     def test_parse_route_info(self):
         """测试路线规划解析 (步行与公共交通)"""
