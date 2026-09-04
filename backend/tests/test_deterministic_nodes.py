@@ -1,6 +1,7 @@
 """确定性节点单元测试 (输入清洗、实体按 ID 还原、严格候选池校验、精确预算算术与显式失败)"""
 
 import unittest
+from unittest.mock import patch, MagicMock
 from app.models.schemas import Location, TripRequest, DayPlan, Attraction, Hotel, Meal
 from app.models.state import (
     AttractionCandidate,
@@ -184,6 +185,70 @@ class TestDeterministicNodes(unittest.TestCase):
         self.assertEqual(lunch.name, "四季民福烤鸭")
         self.assertEqual(lunch.estimated_cost, 120)
         self.assertAlmostEqual(lunch.location.longitude, 116.397026)
+
+    @patch("app.workflow.nodes.postprocess_nodes.get_amap_service")
+    def test_rehydrate_entities_on_demand_location(self, mock_get_amap):
+        """测试初筛无坐标候选在还原阶段触发按需调用补全坐标"""
+        mock_amap = MagicMock()
+        mock_amap.get_poi_detail.side_effect = lambda poi_id: {
+            "id": poi_id,
+            "name": "按需详情",
+            "location": "114.016584,33.580456",
+        }
+        mock_get_amap.return_value = mock_amap
+
+        cand_no_loc = AttractionCandidate(
+            poi_id="POI_LUOHE_1",
+            name="漯河开源森林公园",
+            type="风景名胜",
+            address="漯河市源汇区开源路",
+            location=None,  # 初筛阶段无坐标
+        )
+        cand_hotel_no_loc = HotelCandidate(
+            poi_id="HOTEL_LUOHE_1",
+            name="漯河福朋喜来登酒店",
+            type="高档型",
+            address="漯河市郾城区淮河路",
+            location=None,  # 初筛阶段无坐标
+        )
+
+        skeleton = ItineraryDraftSkeleton(
+            days=[
+                DayAssignment(
+                    day_index=0,
+                    date="2026-09-05",
+                    theme_description="漯河一日游",
+                    attraction_poi_ids=["POI_LUOHE_1"],
+                    hotel_poi_id="HOTEL_LUOHE_1",
+                    meals=[],
+                )
+            ],
+            overall_suggestions="游玩建议",
+        )
+
+        state: TripPlannerState = {
+            "city": "漯河",
+            "draft_skeleton": skeleton,
+            "candidate_attractions": {"POI_LUOHE_1": cand_no_loc},
+            "candidate_hotels": {"HOTEL_LUOHE_1": cand_hotel_no_loc},
+            "candidate_restaurants": {},
+        }
+
+        update = rehydrate_entities_node(state)
+        self.assertNotIn("validation_errors", update)
+        rehydrated_days = update["rehydrated_days"]
+        self.assertEqual(len(rehydrated_days), 1)
+
+        attr = rehydrated_days[0].attractions[0]
+        self.assertIsNotNone(attr.location)
+        self.assertAlmostEqual(attr.location.longitude, 114.016584)
+        self.assertAlmostEqual(attr.location.latitude, 33.580456)
+
+        hotel = rehydrated_days[0].hotel
+        self.assertIsNotNone(hotel)
+        self.assertIsNotNone(hotel.location)
+        self.assertAlmostEqual(hotel.location.longitude, 114.016584)
+        self.assertAlmostEqual(hotel.location.latitude, 33.580456)
 
     def test_rehydrate_entities_rejects_hallucinated_poi_id(self):
         """测试大模型捏造不存在的 POI ID 时被确定性捕获并记录错误"""

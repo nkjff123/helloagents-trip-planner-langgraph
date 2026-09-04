@@ -24,7 +24,7 @@ class AttractionCandidate(BaseModel):
     name: str = Field(..., description="景点官方名称")
     type: str = Field(default="景点", description="POI 分类类型")
     address: str = Field(default="", description="详细地址")
-    location: Location = Field(..., description="真实 GCJ-02 经纬度坐标")
+    location: Optional[Location] = Field(default=None, description="真实 GCJ-02 经纬度坐标 (可延迟按需补齐)")
     rating: Optional[float] = Field(default=None, description="官方评分 (无真实数据则为 None)")
     photos: List[str] = Field(default_factory=list, description="真实照片 URL 列表")
     ticket_price: Optional[int] = Field(default=None, description="官方门票价格 (元，无真实数据则为 None)")
@@ -39,7 +39,7 @@ class HotelCandidate(BaseModel):
     name: str = Field(..., description="酒店官方名称")
     type: str = Field(default="酒店", description="酒店类型")
     address: str = Field(default="", description="酒店详细地址")
-    location: Location = Field(..., description="真实 GCJ-02 经纬度坐标")
+    location: Optional[Location] = Field(default=None, description="真实 GCJ-02 经纬度坐标 (可延迟按需补齐)")
     rating: Optional[str] = Field(default=None, description="用户评分 (无真实数据则为 None)")
     price_range: Optional[str] = Field(default=None, description="价格区间 (无真实数据则为 None)")
     estimated_cost: Optional[int] = Field(default=None, description="预估每晚费用 (元)")
@@ -52,7 +52,7 @@ class RestaurantCandidate(BaseModel):
     name: str = Field(..., description="餐厅官方名称")
     cuisine: str = Field(default="特色餐饮", description="菜系或美食类别")
     address: str = Field(default="", description="餐厅详细地址")
-    location: Location = Field(..., description="真实 GCJ-02 经纬度坐标")
+    location: Optional[Location] = Field(default=None, description="真实 GCJ-02 经纬度坐标 (可延迟按需补齐)")
     rating: Optional[float] = Field(default=None, description="官方评分 (无真实数据则为 None)")
     estimated_cost: Optional[int] = Field(default=None, description="人均消费预估 (元)")
 
@@ -163,9 +163,9 @@ class TripPlannerState(TypedDict, total=False):
     budget: Optional[Budget]
     final_plan: Optional[TripPlan]
 
-    # 6. 工作流控制、度量与校验日志 (使用 operator.add 支持并发节点追加更新)
+    # 6. 工作流控制、度量与校验日志
     validation_passed: bool
-    validation_errors: Annotated[List[str], operator.add]
+    validation_errors: List[str]
     warnings: Annotated[List[str], operator.add]
     repair_count: int
     is_failed: bool

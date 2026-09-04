@@ -177,6 +177,25 @@ def parse_weather_list(raw_response: Any) -> List[WeatherInfo]:
         for f in forecasts:
             if not isinstance(f, dict):
                 continue
+
+            # 兼容 1: amap-mcp-server 扁平格式 (forecasts 下直接是单日预报对象)
+            if "dayweather" in f or "date" in f:
+                try:
+                    weather_info = WeatherInfo(
+                        date=str(f.get("date", "")),
+                        day_weather=str(f.get("dayweather", "")),
+                        night_weather=str(f.get("nightweather", "")),
+                        day_temp=f.get("daytemp") or f.get("daytemp_float") or 0,
+                        night_temp=f.get("nighttemp") or f.get("nighttemp_float") or 0,
+                        wind_direction=str(f.get("daywind", "") or f.get("nightwind", "")),
+                        wind_power=str(f.get("daypower", "") or f.get("nightpower", "")),
+                    )
+                    weather_list.append(weather_info)
+                    continue
+                except Exception as e:
+                    logger.warning(f"解析 MCP 扁平预报天气单日数据失败: {str(e)}, 数据: {f}")
+
+            # 兼容 2: 原生高德 Web API 嵌套格式 (forecasts -> casts)
             casts = f.get("casts", [])
             if isinstance(casts, list):
                 for cast in casts:
@@ -250,7 +269,8 @@ def parse_poi_list(raw_response: Any) -> List[POIInfo]:
 
         loc = parse_location_str(p.get("location"))
         if loc is None:
-            continue
+            # 兼容 MCP 工具未带坐标的情况，设置基础坐标对象
+            loc = Location(longitude=0.0, latitude=0.0)
 
         address = p.get("address")
         if not isinstance(address, str):
@@ -397,14 +417,12 @@ def extract_photos_from_poi(poi_dict: Dict[str, Any]) -> List[str]:
 
 
 def poi_to_attraction_candidate(poi: Dict[str, Any]) -> Optional[AttractionCandidate]:
-    """将原始 POI 字典转换为无伪造默认值的 AttractionCandidate"""
+    """将原始 POI 字典转换为无伪造默认值的 AttractionCandidate (经纬度允许延迟按需补齐)"""
     poi_id = poi.get("id") or poi.get("poi_id")
     name = poi.get("name")
     if not poi_id or not name:
         return None
     loc = parse_location_str(poi.get("location"))
-    if loc is None:
-        return None
 
     biz_ext = poi.get("biz_ext") if isinstance(poi.get("biz_ext"), dict) else {}
     rating_val = biz_ext.get("rating") or poi.get("rating")
@@ -445,14 +463,12 @@ def poi_to_attraction_candidate(poi: Dict[str, Any]) -> Optional[AttractionCandi
 
 
 def poi_to_hotel_candidate(poi: Dict[str, Any]) -> Optional[HotelCandidate]:
-    """将原始 POI 字典转换为无伪造默认值的 HotelCandidate"""
+    """将原始 POI 字典转换为无伪造默认值的 HotelCandidate (经纬度允许延迟按需补齐)"""
     poi_id = poi.get("id") or poi.get("poi_id")
     name = poi.get("name")
     if not poi_id or not name:
         return None
     loc = parse_location_str(poi.get("location"))
-    if loc is None:
-        return None
 
     biz_ext = poi.get("biz_ext") if isinstance(poi.get("biz_ext"), dict) else {}
     rating_val = biz_ext.get("rating") or poi.get("rating")
@@ -480,14 +496,12 @@ def poi_to_hotel_candidate(poi: Dict[str, Any]) -> Optional[HotelCandidate]:
 
 
 def poi_to_restaurant_candidate(poi: Dict[str, Any]) -> Optional[RestaurantCandidate]:
-    """将原始 POI 字典转换为无伪造默认值的 RestaurantCandidate"""
+    """将原始 POI 字典转换为无伪造默认值的 RestaurantCandidate (经纬度允许延迟按需补齐)"""
     poi_id = poi.get("id") or poi.get("poi_id")
     name = poi.get("name")
     if not poi_id or not name:
         return None
     loc = parse_location_str(poi.get("location"))
-    if loc is None:
-        return None
 
     biz_ext = poi.get("biz_ext") if isinstance(poi.get("biz_ext"), dict) else {}
     rating_val = biz_ext.get("rating") or poi.get("rating")

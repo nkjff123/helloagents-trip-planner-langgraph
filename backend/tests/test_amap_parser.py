@@ -112,6 +112,45 @@ class TestAmapParser(unittest.TestCase):
         self.assertEqual(weather_list[0].night_temp, 12)
         self.assertEqual(weather_list[1].day_weather, "阴")
 
+    def test_parse_weather_mcp_format(self):
+        """测试 amap-mcp-server 扁平预报天气格式 (forecasts 下直接为单日预报对象)"""
+        mcp_weather_raw = """
+        工具 'maps_weather' 执行结果:
+        {
+            "city": "漯河市",
+            "forecasts": [
+                {
+                    "date": "2026-09-04",
+                    "dayweather": "晴",
+                    "nightweather": "晴",
+                    "daytemp": "31",
+                    "nighttemp": "21",
+                    "daywind": "东北",
+                    "daypower": "≤3",
+                    "nightpower": "≤3"
+                },
+                {
+                    "date": "2026-09-05",
+                    "dayweather": "多云",
+                    "nightweather": "晴",
+                    "daytemp": "30",
+                    "nighttemp": "22",
+                    "daywind": "东",
+                    "daypower": "≤3",
+                    "nightpower": "≤3"
+                }
+            ]
+        }
+        """
+        weather_list = parse_weather_list(mcp_weather_raw)
+        self.assertEqual(len(weather_list), 2)
+        self.assertEqual(weather_list[0].date, "2026-09-04")
+        self.assertEqual(weather_list[0].day_weather, "晴")
+        self.assertEqual(weather_list[0].day_temp, 31)
+        self.assertEqual(weather_list[0].night_temp, 21)
+        self.assertEqual(weather_list[1].date, "2026-09-05")
+        self.assertEqual(weather_list[1].day_weather, "多云")
+
     def test_parse_weather_failure_returns_empty_list(self):
         """核心规范测试: 外部天气服务失败时返回空列表，绝对不伪造假晴天"""
         bad_response = "MCP 操作失败: API key quota exceeded"
@@ -180,6 +219,30 @@ class TestAmapParser(unittest.TestCase):
         self.assertEqual(hotel_cand.rating, "4.6")
         self.assertEqual(hotel_cand.estimated_cost, 850)
         self.assertIsNone(hotel_cand.price_range, "API 未提供价格区间时必须为 None")
+
+    def test_poi_candidate_without_location(self):
+        """测试 maps_text_search 裁剪返回无 location 字段时的 POI 候选保留 (严禁误杀丢弃)"""
+        mcp_poi = {
+            "id": "B018B0M9TX",
+            "name": "许慎文化园",
+            "address": "河南省漯河市郾城区龙江路与中山路交叉口向东500米",
+            "typecode": "110202",
+        }
+        cand = poi_to_attraction_candidate(mcp_poi)
+        self.assertIsNotNone(cand, "无 location 字段的 POI 不能被过滤丢弃")
+        self.assertEqual(cand.poi_id, "B018B0M9TX")
+        self.assertEqual(cand.name, "许慎文化园")
+        self.assertIsNone(cand.location, "初筛阶段无经纬度时允许 location 为 None，由还原阶段按需补齐")
+
+        # 酒店无坐标同样保留
+        hotel_cand = poi_to_hotel_candidate(mcp_poi)
+        self.assertIsNotNone(hotel_cand)
+        self.assertIsNone(hotel_cand.location)
+
+        # 餐饮无坐标同样保留
+        rest_cand = poi_to_restaurant_candidate(mcp_poi)
+        self.assertIsNotNone(rest_cand)
+        self.assertIsNone(rest_cand.location)
 
     def test_parse_route_info(self):
         """测试路线规划解析 (步行与公共交通)"""

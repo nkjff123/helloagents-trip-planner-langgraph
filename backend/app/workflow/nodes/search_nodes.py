@@ -63,6 +63,7 @@ def search_attractions(state: TripPlannerState) -> Dict[str, Any]:
 
     logger.info(f"开始检索景点候选池 (城市: {city}, 关键词: {keywords})")
     candidates_map: Dict[str, AttractionCandidate] = {}
+    warnings: List[str] = []
 
     for kw in keywords:
         try:
@@ -73,8 +74,27 @@ def search_attractions(state: TripPlannerState) -> Dict[str, Any]:
         except Exception as e:
             logger.error(f"关键词 '{kw}' 检索景点失败: {str(e)}")
 
+    # 兜底保护：若专属词检索完毕后 candidates_map 仍为空，自动执行通用兜底词泛搜
+    if not candidates_map:
+        fallback_keywords = [f"{city}景区", "景点", "公园"]
+        logger.warning(f"专属关键词未命中任何景点，触发通用兜底词泛搜: {fallback_keywords}")
+        warnings.append(f"景点检索专属词未命中，已自动触发兜底泛搜")
+        for fkw in fallback_keywords:
+            try:
+                items = amap_service.search_attraction_candidates(keywords=fkw, city=city)
+                for item in items:
+                    if item.poi_id not in candidates_map:
+                        candidates_map[item.poi_id] = item
+                if candidates_map:
+                    break
+            except Exception as e:
+                logger.error(f"兜底词 '{fkw}' 检索景点失败: {str(e)}")
+
     logger.info(f"景点检索完成，共汇总去重得到 {len(candidates_map)} 个真实候选景点")
-    return {"candidate_attractions": candidates_map}
+    result: Dict[str, Any] = {"candidate_attractions": candidates_map}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def search_hotels(state: TripPlannerState) -> Dict[str, Any]:
@@ -87,6 +107,7 @@ def search_hotels(state: TripPlannerState) -> Dict[str, Any]:
 
     logger.info(f"开始检索酒店候选池 (城市: {city}, 关键词: {hotel_kw})")
     candidates_map: Dict[str, HotelCandidate] = {}
+    warnings: List[str] = []
 
     try:
         items = amap_service.search_hotel_candidates(keywords=hotel_kw, city=city)
@@ -96,8 +117,29 @@ def search_hotels(state: TripPlannerState) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"检索酒店候选失败: {str(e)}")
 
+    # 兜底保护：若专属词检索完毕后 candidates_map 仍为空，自动执行通用兜底词泛搜
+    if not candidates_map:
+        fallback_hotel_kws = ["宾馆", "住宿", "酒店"]
+        logger.warning(f"酒店关键词未命中任何结果，触发通用兜底词泛搜: {fallback_hotel_kws}")
+        warnings.append("酒店检索专属词未命中，已自动触发兜底泛搜")
+        for fkw in fallback_hotel_kws:
+            if fkw == hotel_kw:
+                continue
+            try:
+                items = amap_service.search_hotel_candidates(keywords=fkw, city=city)
+                for item in items:
+                    if item.poi_id not in candidates_map:
+                        candidates_map[item.poi_id] = item
+                if candidates_map:
+                    break
+            except Exception as e:
+                logger.error(f"兜底检索酒店候选失败: {str(e)}")
+
     logger.info(f"酒店检索完成，共汇总去重得到 {len(candidates_map)} 个真实候选酒店")
-    return {"candidate_hotels": candidates_map}
+    result: Dict[str, Any] = {"candidate_hotels": candidates_map}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def search_restaurants(state: TripPlannerState) -> Dict[str, Any]:
@@ -114,6 +156,7 @@ def search_restaurants(state: TripPlannerState) -> Dict[str, Any]:
 
     logger.info(f"开始检索特色餐饮候选池 (城市: {city}, 关键词: {keywords})")
     candidates_map: Dict[str, RestaurantCandidate] = {}
+    warnings: List[str] = []
 
     for kw in keywords:
         try:
@@ -124,5 +167,24 @@ def search_restaurants(state: TripPlannerState) -> Dict[str, Any]:
         except Exception as e:
             logger.error(f"关键词 '{kw}' 检索餐饮失败: {str(e)}")
 
+    # 兜底保护：若专属词检索完毕后 candidates_map 仍为空，自动执行通用兜底词泛搜
+    if not candidates_map:
+        fallback_rest_kws = ["美食", "餐馆", "小吃"]
+        logger.warning(f"餐饮专属词未命中任何结果，触发通用兜底词泛搜: {fallback_rest_kws}")
+        warnings.append("餐饮检索专属词未命中，已自动触发兜底泛搜")
+        for fkw in fallback_rest_kws:
+            try:
+                items = amap_service.search_restaurant_candidates(keywords=fkw, city=city)
+                for item in items:
+                    if item.poi_id not in candidates_map:
+                        candidates_map[item.poi_id] = item
+                if candidates_map:
+                    break
+            except Exception as e:
+                logger.error(f"兜底词 '{fkw}' 检索餐饮失败: {str(e)}")
+
     logger.info(f"餐饮检索完成，共汇总去重得到 {len(candidates_map)} 个真实候选餐厅")
-    return {"candidate_restaurants": candidates_map}
+    result: Dict[str, Any] = {"candidate_restaurants": candidates_map}
+    if warnings:
+        result["warnings"] = warnings
+    return result

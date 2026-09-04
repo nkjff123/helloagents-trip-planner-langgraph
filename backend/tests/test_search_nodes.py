@@ -122,6 +122,31 @@ class TestSearchNodes(unittest.TestCase):
         self.assertIn("POI_LINGYIN", candidates)
 
     @patch("app.workflow.nodes.search_nodes.get_amap_service")
+    def test_search_attractions_fallback_on_empty(self, mock_get_amap):
+        """测试专属关键词命中数为0时，自动触发通用兜底词泛搜机制"""
+        mock_service = MagicMock()
+        fallback_cand = AttractionCandidate(
+            poi_id="POI_FALLBACK",
+            name="漯河市沙澧河风景区",
+            type="风景名胜",
+            location=None,
+        )
+        # 初始专属关键词均返回空列表，兜底词搜索命中
+        mock_service.search_attraction_candidates.side_effect = [
+            [],  # kw 1: 西湖风景区 -> 0
+            [],  # kw 2: 灵隐寺 -> 0
+            [fallback_cand],  # 兜底词 -> 命中 1 个
+        ]
+        mock_get_amap.return_value = mock_service
+
+        result = search_attractions(self.base_state)
+        self.assertIn("candidate_attractions", result)
+        self.assertEqual(len(result["candidate_attractions"]), 1)
+        self.assertIn("POI_FALLBACK", result["candidate_attractions"])
+        self.assertIn("warnings", result)
+        self.assertTrue(any("兜底泛搜" in w for w in result["warnings"]))
+
+    @patch("app.workflow.nodes.search_nodes.get_amap_service")
     def test_search_hotels(self, mock_get_amap):
         """测试酒店检索与候选池聚合"""
         mock_service = MagicMock()

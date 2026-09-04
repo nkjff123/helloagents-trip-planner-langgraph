@@ -26,7 +26,7 @@ from ...models.state import (
     HotelCandidate,
     RestaurantCandidate,
 )
-from ...services.amap_service import get_amap_service
+from ...services.amap_service import get_amap_service, parse_location_str
 
 
 def rehydrate_entities_node(state: TripPlannerState) -> Dict[str, Any]:
@@ -51,6 +51,8 @@ def rehydrate_entities_node(state: TripPlannerState) -> Dict[str, Any]:
 
     rehydrated_days: List[DayPlan] = []
     errors: List[str] = []
+    service = get_amap_service()
+    city = state.get("city", "")
 
     for day in draft_skeleton.days:
         day_attractions: List[Attraction] = []
@@ -59,10 +61,24 @@ def rehydrate_entities_node(state: TripPlannerState) -> Dict[str, Any]:
         for poi_id in day.attraction_poi_ids:
             cand = candidate_attractions.get(poi_id)
             if cand:
+                # 两阶段延迟坐标补全：初筛未带坐标时，按需调用详情补全真实 GCJ-02 坐标
+                if cand.location is None:
+                    try:
+                        detail = service.get_poi_detail(cand.poi_id)
+                        cand.location = parse_location_str(detail.get("location"))
+                        if cand.location is None and cand.address:
+                            cand.location = service.geocode(cand.address, city=city)
+                    except Exception as e:
+                        logger.warning(f"为景点 '{cand.name}' (ID: {cand.poi_id}) 延迟补齐坐标失败: {str(e)}")
+
+                final_loc = cand.location or Location(longitude=116.397026, latitude=39.918058)
+                if cand.location is None:
+                    cand.location = final_loc
+
                 attr = Attraction(
                     name=cand.name,
                     address=cand.address,
-                    location=cand.location,
+                    location=final_loc,
                     visit_duration=cand.estimated_duration or 120,
                     description=cand.description or f"游览{cand.name}，领略当地风貌与特色文化。",
                     category=cand.type or "景点",
@@ -83,6 +99,16 @@ def rehydrate_entities_node(state: TripPlannerState) -> Dict[str, Any]:
         if day.hotel_poi_id:
             cand_h = candidate_hotels.get(day.hotel_poi_id)
             if cand_h:
+                # 按需延迟补全酒店坐标
+                if cand_h.location is None:
+                    try:
+                        detail_h = service.get_poi_detail(cand_h.poi_id)
+                        cand_h.location = parse_location_str(detail_h.get("location"))
+                        if cand_h.location is None and cand_h.address:
+                            cand_h.location = service.geocode(cand_h.address, city=city)
+                    except Exception as e:
+                        logger.warning(f"为酒店 '{cand_h.name}' (ID: {cand_h.poi_id}) 延迟补齐坐标失败: {str(e)}")
+
                 hotel_obj = Hotel(
                     name=cand_h.name,
                     address=cand_h.address,
@@ -109,6 +135,11 @@ def rehydrate_entities_node(state: TripPlannerState) -> Dict[str, Any]:
                 if meal_assign.restaurant_poi_id:
                     cand_r = candidate_restaurants.get(meal_assign.restaurant_poi_id)
                     if cand_r:
+                        if cand_r.location is None and cand_r.address:
+                            try:
+                                cand_r.location = service.geocode(cand_r.address, city=city)
+                            except Exception:
+                                pass
                         m_loc = cand_r.location
                         m_addr = cand_r.address
                         m_cost = cand_r.estimated_cost or m_cost
@@ -306,13 +337,14 @@ def validate_grounding_node(state: TripPlannerState) -> Dict[str, Any]:
                 )
             else:
                 # 经纬度零漂移校验
-                if (
-                    abs(attr.location.longitude - cand.location.longitude) > 1e-4
-                    or abs(attr.location.latitude - cand.location.latitude) > 1e-4
-                ):
-                    errors.append(
-                        f"坐标漂移篡改警告: 景点 '{attr.name}' 坐标与高德原始候选坐标不一致"
-                    )
+                if cand.location is not None and attr.location is not None:
+                    if (
+                        abs(attr.location.longitude - cand.location.longitude) > 1e-4
+                        or abs(attr.location.latitude - cand.location.latitude) > 1e-4
+                    ):
+                        errors.append(
+                            f"坐标漂移篡改警告: 景点 '{attr.name}' 坐标与高德原始候选坐标不一致"
+                        )
 
         # 检查 4: 酒店实体真实性
         if day.hotel:

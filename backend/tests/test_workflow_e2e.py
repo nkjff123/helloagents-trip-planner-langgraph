@@ -358,6 +358,66 @@ class TestWorkflowE2E(unittest.TestCase):
         self.assertIsNone(final_state.get("final_plan"))
         self.assertIn("生成失败", final_state.get("error_message", ""))
 
+    @patch("app.workflow.nodes.reasoning_nodes.generate_structured")
+    @patch("app.workflow.nodes.search_nodes.get_amap_service")
+    def test_validation_errors_no_duplication(
+        self, mock_get_amap, mock_generate_structured
+    ):
+        """测试状态中 validation_errors 不再使用 operator.add 导致多轮自愈循环中错误雪崩式重复"""
+        mock_amap = MagicMock()
+        mock_amap.get_weather.return_value = []
+        mock_amap.search_attraction_candidates.return_value = [self.mock_attr_1]
+        mock_amap.search_hotel_candidates.return_value = []
+        mock_amap.search_restaurant_candidates.return_value = []
+        mock_amap.plan_route.return_value = None
+        mock_get_amap.return_value = mock_amap
+
+        mock_strategy = SearchStrategy(
+            attraction_keywords=["西湖"],
+            hotel_keyword="酒店",
+            restaurant_keywords=["特色菜"],
+        )
+        mock_curation = CuratedAttractions(
+            selected_poi_ids=["POI_WEST_LAKE"],
+            reasoning="西湖",
+        )
+
+        persistent_flawed_skeleton = ItineraryDraftSkeleton(
+            days=[
+                DayAssignment(
+                    day_index=0,
+                    date="2026-10-01",
+                    theme_description="测试错误去重",
+                    attraction_poi_ids=["UNKNOWN_POI_SINGLE"],
+                    meals=[],
+                )
+            ],
+            overall_suggestions="建议",
+        )
+
+        mock_generate_structured.side_effect = [
+            mock_strategy,
+            mock_curation,
+            persistent_flawed_skeleton,  # 首次失败
+            persistent_flawed_skeleton,  # 修补1失败
+            persistent_flawed_skeleton,  # 修补2失败终止
+        ]
+
+        req = TripRequest(
+            city="杭州",
+            start_date="2026-10-01",
+            end_date="2026-10-01",
+            travel_days=1,
+            transportation="公共交通",
+            accommodation="经济型酒店",
+        )
+
+        final_state = run_trip_planner_workflow(req)
+        self.assertTrue(final_state.get("is_failed"))
+        errors = final_state.get("validation_errors", [])
+        # 验证经过3次错误记录后，当前轮次错误列表长度为1，绝不因为 operator.add 膨胀到3条重复错误
+        self.assertEqual(len(errors), 1, "validation_errors 必须为当前轮次覆盖，禁止重复叠加")
+
 
 if __name__ == "__main__":
     unittest.main()
