@@ -100,11 +100,15 @@ async def health_check():
     """健康检查"""
     try:
         graph = get_trip_planner_graph()
+        from ...services.llm_service import get_llm
+        llm = get_llm()
         return {
             "status": "healthy",
             "service": "trip-planner",
             "engine": "langgraph-stategraph",
             "graph_compiled": graph is not None,
+            "llm_provider": llm.provider,
+            "llm_model": llm.model,
         }
     except Exception as e:
         logger.exception(f"旅行规划健康检查失败: {str(e)}")

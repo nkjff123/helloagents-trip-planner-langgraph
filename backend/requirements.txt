@@ -1,5 +1,5 @@
-# HelloAgents框架
-hello-agents[protocols]>=0.2.4,<=0.2.9
+# LLM 官方客户端
+openai>=1.0.0
 
 # LangGraph 状态图工作流编排引擎
 langgraph>=0.2.0

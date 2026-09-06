@@ -4,22 +4,135 @@
 的健壮调用与解析，严格切断虚构数据，确保真实 POI/天气/路线/坐标落地。
 """
 
+import asyncio
+import concurrent.futures
 import json
 import re
 from datetime import date
 from typing import List, Dict, Any, Optional, Union
 from loguru import logger
-from hello_agents.tools import MCPTool
+from fastmcp import Client
+from fastmcp.client.transports import StdioTransport
 
 from ..config import get_settings
 from ..models.schemas import Location, POIInfo, WeatherInfo, RouteInfo
 from ..models.state import AttractionCandidate, HotelCandidate, RestaurantCandidate
 
+
+class AmapMCPClient:
+    """高德地图 MCP 客户端 (基于 FastMCP Stdio 协议，脱离 hello_agents)"""
+
+    def __init__(
+        self,
+        api_key: str,
+        name: str = "amap",
+        description: str = "高德地图服务，支持 POI 搜索、路线规划、天气查询等功能",
+        server_command: Optional[List[str]] = None,
+    ):
+        self.name = name
+        self.description = description
+        self.api_key = api_key
+        self.server_command = server_command or ["uvx", "amap-mcp-server"]
+        self.env = {"AMAP_MAPS_API_KEY": api_key}
+        self._available_tools_cache: Optional[List[Dict[str, Any]]] = None
+
+    def _create_transport(self) -> StdioTransport:
+        return StdioTransport(
+            command=self.server_command[0],
+            args=self.server_command[1:],
+            env=self.env,
+        )
+
+    def _run_async(self, coro):
+        """线程安全的异步协同调度，兼容已有事件循环运行的场景"""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(asyncio.run, coro).result()
+        else:
+            return asyncio.run(coro)
+
+    def _discover_tools(self) -> List[Dict[str, Any]]:
+        """探测可用工具列表"""
+        async def _do_discover():
+            transport = self._create_transport()
+            async with Client(transport) as client:
+                tools = await client.list_tools()
+                return [
+                    {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                    }
+                    for tool in tools
+                ]
+
+        try:
+            self._available_tools_cache = self._run_async(_do_discover())
+            return self._available_tools_cache
+        except Exception as e:
+            logger.warning(f"高德 MCP 工具发现失败 (将在实际调用时重试): {e}")
+            self._available_tools_cache = []
+            return []
+
+    @property
+    def available_tools(self) -> List[Dict[str, Any]]:
+        """获取可用工具列表"""
+        if self._available_tools_cache is None:
+            self._discover_tools()
+        return self._available_tools_cache or []
+
+    @property
+    def _available_tools(self) -> List[Dict[str, Any]]:
+        """向下兼容历史私有属性访问 (例如 routes/map.py)"""
+        return self.available_tools
+
+    def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+        """调用 MCP 工具，返回标准字符串文本响应"""
+        async def _do_call():
+            transport = self._create_transport()
+            async with Client(transport) as client:
+                res = await client.call_tool(tool_name, arguments)
+                if hasattr(res, "content") and res.content:
+                    texts = []
+                    for c in res.content:
+                        if hasattr(c, "text") and c.text:
+                            texts.append(c.text)
+                        else:
+                            texts.append(str(c))
+                    return "\n".join(texts)
+                return str(res) if res is not None else ""
+
+        try:
+            result = self._run_async(_do_call())
+            return f"工具 '{tool_name}' 执行结果:\n{result}"
+        except Exception as e:
+            logger.error(f"MCP 工具 '{tool_name}' 调用异常: {e}")
+            return f"MCP 操作失败: {str(e)}"
+
+    def run(self, parameters: Dict[str, Any]) -> str:
+        """兼容通用参数调用协议"""
+        action = parameters.get("action", "").lower()
+        if not action and "tool_name" in parameters:
+            action = "call_tool"
+
+        if not action or (action != "call_tool" and "tool_name" not in parameters):
+            return "错误：必须指定 action 参数或 tool_name 参数"
+
+        tool_name = parameters.get("tool_name", "")
+        arguments = parameters.get("arguments", {})
+        return self.call_tool(tool_name, arguments)
+
+
 # 全局 MCP 工具实例
-_amap_mcp_tool: Optional[MCPTool] = None
+_amap_mcp_tool: Optional[AmapMCPClient] = None
 
 
-def get_amap_mcp_tool() -> MCPTool:
+def get_amap_mcp_tool() -> AmapMCPClient:
     """获取高德地图 MCP 工具实例 (单例模式)"""
     global _amap_mcp_tool
 
@@ -30,16 +143,15 @@ def get_amap_mcp_tool() -> MCPTool:
             raise ValueError("高德地图 API Key 未配置，请在 .env 文件中设置 AMAP_API_KEY")
 
         # 创建 MCP 工具
-        _amap_mcp_tool = MCPTool(
+        _amap_mcp_tool = AmapMCPClient(
+            api_key=settings.amap_api_key,
             name="amap",
             description="高德地图服务，支持 POI 搜索、路线规划、天气查询等功能",
             server_command=["uvx", "amap-mcp-server"],
-            env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
-            auto_expand=True,
         )
 
         logger.info(
-            f"高德地图 MCP 工具初始化成功 | 可用工具数: {len(_amap_mcp_tool._available_tools)}"
+            f"高德地图 MCP 工具初始化成功 | 可用工具数: {len(_amap_mcp_tool.available_tools)}"
         )
 
     return _amap_mcp_tool
@@ -576,10 +688,10 @@ class AmapService:
 
     def __init__(self):
         """初始化服务 (延迟加载 MCP 工具)"""
-        self._mcp_tool: Optional[MCPTool] = None
+        self._mcp_tool: Optional[AmapMCPClient] = None
 
     @property
-    def mcp_tool(self) -> MCPTool:
+    def mcp_tool(self) -> AmapMCPClient:
         """获取 MCP 工具 (延迟初始化)"""
         if self._mcp_tool is None:
             self._mcp_tool = get_amap_mcp_tool()
@@ -587,11 +699,7 @@ class AmapService:
 
     def _call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """底层统一 MCP 工具调用封装"""
-        return self.mcp_tool.run({
-            "action": "call_tool",
-            "tool_name": tool_name,
-            "arguments": arguments,
-        })
+        return self.mcp_tool.call_tool(tool_name=tool_name, arguments=arguments)
 
     def search_poi(self, keywords: str, city: str, citylimit: bool = True) -> List[POIInfo]:
         """搜索 POI 并返回结构化 POIInfo 列表

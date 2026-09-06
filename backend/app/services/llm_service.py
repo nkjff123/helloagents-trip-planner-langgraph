@@ -1,29 +1,155 @@
-"""LLM 服务模块 (支持结构化 Pydantic 模型安全生成与自愈校验)"""
+"""LLM 服务模块 (基于标准 OpenAI SDK，支持结构化 Pydantic 模型安全生成与自愈校验)"""
 
+import os
 import json
 import re
-from typing import Type, TypeVar, List, Dict, Any, Optional
+from typing import Type, TypeVar, List, Dict, Any, Optional, Iterator
 from pydantic import BaseModel, ValidationError
+from openai import OpenAI
 from loguru import logger
-from hello_agents import HelloAgentsLLM
 from ..config import get_settings
 
 T = TypeVar("T", bound=BaseModel)
 
+
+class OpenAILLMClient:
+    """基于官方 OpenAI SDK 的标准 LLM 客户端，全面兼容所有 OpenAI 规范的 API 接口"""
+
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[int] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ):
+        settings = get_settings()
+
+        self.api_key = (
+            api_key
+            or os.getenv("LLM_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or settings.openai_api_key
+            or "sk-placeholder"
+        )
+        self.base_url = (
+            base_url
+            or os.getenv("LLM_BASE_URL")
+            or settings.openai_base_url
+            or "https://api.openai.com/v1"
+        )
+        self.model = (
+            model
+            or os.getenv("LLM_MODEL_ID")
+            or settings.openai_model
+            or "gpt-3.5-turbo"
+        )
+        self.timeout = timeout or int(os.getenv("LLM_TIMEOUT", "60"))
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.kwargs = kwargs
+
+        # 智能推断提供商标识
+        self.provider = self._infer_provider(self.base_url)
+
+        # 创建官方 OpenAI 客户端
+        self._client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=float(self.timeout),
+        )
+
+    def _infer_provider(self, base_url: str) -> str:
+        """根据 base_url 推断大模型提供商"""
+        url_lower = (base_url or "").lower()
+        if "deepseek" in url_lower:
+            return "deepseek"
+        elif "dashscope" in url_lower:
+            return "qwen"
+        elif "modelscope" in url_lower:
+            return "modelscope"
+        elif "moonshot" in url_lower:
+            return "kimi"
+        elif "bigmodel" in url_lower:
+            return "zhipu"
+        elif "ollama" in url_lower or ":11434" in url_lower:
+            return "ollama"
+        elif "openai.com" in url_lower:
+            return "openai"
+        return "custom-openai"
+
+    def invoke(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        """非流式调用大语言模型，返回完整文本响应"""
+        temp = kwargs.get("temperature", self.temperature)
+        max_tok = kwargs.get("max_tokens", self.max_tokens)
+        other_kwargs = {
+            k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]
+        }
+
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temp,
+                max_tokens=max_tok,
+                **other_kwargs,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            # 针对部分开源模型网关不支持 response_format={"type": "json_object"} 时的自适应平滑降级
+            if "response_format" in other_kwargs and (
+                "response_format" in str(e).lower()
+                or "unsupported" in str(e).lower()
+                or "invalid parameter" in str(e).lower()
+            ):
+                logger.warning(
+                    f"LLM 服务网关不支持 response_format 参数，自动降级为普通请求并依赖 Prompt 约束: {e}"
+                )
+                other_kwargs.pop("response_format", None)
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temp,
+                    max_tokens=max_tok,
+                    **other_kwargs,
+                )
+                return response.choices[0].message.content or ""
+            raise
+
+    def stream_invoke(self, messages: List[Dict[str, str]], **kwargs) -> Iterator[str]:
+        """流式调用大语言模型，逐块生成文本"""
+        temp = kwargs.get("temperature", self.temperature)
+        max_tok = kwargs.get("max_tokens", self.max_tokens)
+        other_kwargs = {
+            k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]
+        }
+
+        response = self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temp,
+            max_tokens=max_tok,
+            stream=True,
+            **other_kwargs,
+        )
+        for chunk in response:
+            content = chunk.choices[0].delta.content or ""
+            if content:
+                yield content
+
+
 # 全局 LLM 实例
-_llm_instance: Optional[HelloAgentsLLM] = None
+_llm_instance: Optional[OpenAILLMClient] = None
 
 
-def get_llm() -> HelloAgentsLLM:
+def get_llm() -> OpenAILLMClient:
     """获取 LLM 实例 (单例模式)"""
     global _llm_instance
 
     if _llm_instance is None:
-        settings = get_settings()
-
-        # HelloAgentsLLM 会自动从环境变量读取配置 (LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_ID 等)
-        _llm_instance = HelloAgentsLLM()
-
+        _llm_instance = OpenAILLMClient()
         logger.info(
             f"LLM 服务初始化成功 | 提供商: {_llm_instance.provider} | 模型: {_llm_instance.model}"
         )
@@ -41,16 +167,24 @@ def extract_json_string(text: str) -> str:
     """从大模型原始回复中稳健提取合法 JSON 字符串
 
     支持:
+    - 自动剥离思考过程标签 (<think>...</think>)
+    - Markdown ```json ... ``` 形式的代码块
     - 纯 JSON 文本
-    - ```json ... ``` 形式的代码块
     - 前后包含推理文字或换行符的多行内容
     """
     if not text:
         raise ValueError("LLM 返回空响应，无法提取 JSON")
 
-    trimmed = text.strip()
+    # 1. 自动剥离推理模型（如 DeepSeek-R1 / Qwen-Thinking / Claude 等）的思考标签 (支持闭合与未闭合截断)
+    cleaned = re.sub(
+        r"<(?:think|thought|reasoning)>[\s\S]*?(?:</(?:think|thought|reasoning)>|$)",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    trimmed = cleaned.strip()
 
-    # 1. 优先匹配 markdown json 代码块
+    # 2. 优先匹配 markdown json 代码块
     json_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", trimmed, re.IGNORECASE)
     if json_block_match:
         candidate = json_block_match.group(1).strip()
@@ -59,7 +193,7 @@ def extract_json_string(text: str) -> str:
         if candidate.startswith("[") and candidate.endswith("]"):
             return candidate
 
-    # 2. 匹配最外层花括号 {...} 或方括号 [...]
+    # 3. 匹配最外层花括号 {...} 或方括号 [...]
     first_brace = trimmed.find("{")
     last_brace = trimmed.rfind("}")
     if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
@@ -85,7 +219,7 @@ def generate_structured(
     保证:
     1. 动态注入 JSON Schema 与输出约束指令
     2. 使用 response_format={"type": "json_object"} 强制 JSON 格式
-    3. 自动清洗 Markdown 与杂质字符
+    3. 自动剥离 <think> 思考标签与清洗 Markdown 杂质字符
     4. 内置 Pydantic 校验与失败自愈修补循环 (Self-Correction Loop)
 
     Args:
