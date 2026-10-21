@@ -7,8 +7,12 @@
 import asyncio
 import concurrent.futures
 import json
+import os
 import re
+import shutil
+import sys
 from datetime import date
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 from loguru import logger
 from fastmcp import Client
@@ -17,6 +21,33 @@ from fastmcp.client.transports import StdioTransport
 from ..config import get_settings
 from ..models.schemas import Location, POIInfo, WeatherInfo, RouteInfo
 from ..models.state import AttractionCandidate, HotelCandidate, RestaurantCandidate
+
+
+def resolve_default_server_command() -> List[str]:
+    """解析默认的 amap-mcp-server 启动命令，解决 uvx 绝对路径寻址与 pydantic 兼容性锁定"""
+    uvx_cmd = shutil.which("uvx")
+    if not uvx_cmd:
+        py_dir = Path(sys.executable).parent
+        for candidate in [
+            py_dir / "Scripts" / "uvx.exe",
+            py_dir / "uvx.exe",
+            py_dir / "Scripts" / "uvx",
+            py_dir / "bin" / "uvx",
+        ]:
+            if candidate.exists():
+                uvx_cmd = str(candidate)
+                break
+    if not uvx_cmd:
+        uvx_cmd = "uvx"
+
+    return [
+        uvx_cmd,
+        "--with",
+        "pydantic<2.14",
+        "--python",
+        sys.executable,
+        "amap-mcp-server",
+    ]
 
 
 class AmapMCPClient:
@@ -32,8 +63,20 @@ class AmapMCPClient:
         self.name = name
         self.description = description
         self.api_key = api_key
-        self.server_command = server_command or ["uvx", "amap-mcp-server"]
+        self.server_command = server_command or resolve_default_server_command()
         self.env = {"AMAP_MAPS_API_KEY": api_key}
+        for proxy_var in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "no_proxy",
+        ):
+            if proxy_var in os.environ:
+                self.env[proxy_var] = os.environ[proxy_var]
         self._available_tools_cache: Optional[List[Dict[str, Any]]] = None
 
     def _create_transport(self) -> StdioTransport:
@@ -147,7 +190,7 @@ def get_amap_mcp_tool() -> AmapMCPClient:
             api_key=settings.amap_api_key,
             name="amap",
             description="高德地图服务，支持 POI 搜索、路线规划、天气查询等功能",
-            server_command=["uvx", "amap-mcp-server"],
+            server_command=None,
         )
 
         logger.info(

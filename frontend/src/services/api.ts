@@ -48,6 +48,13 @@ export async function generateTripPlan(formData: TripFormData): Promise<TripPlan
   }
 }
 
+export async function getAttractionPhoto(name: string, signal?: AbortSignal): Promise<string | null> {
+  try {
+    const { data } = await apiClient.get('/api/poi/photo', { params: { name }, timeout: 8000, signal })
+    return data.success && typeof data.data?.photo_url === 'string' ? data.data.photo_url : null
+  } catch { return null }
+}
+
 /**
  * 健康检查
  */

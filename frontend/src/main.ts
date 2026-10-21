@@ -19,7 +19,8 @@ const router = createRouter({
       name: 'Result',
       component: Result
     }
-  ]
+  ],
+  scrollBehavior: () => ({ top: 0 })
 })
 
 const app = createApp(App)
