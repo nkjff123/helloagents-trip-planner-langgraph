@@ -20,12 +20,27 @@ def get_embeddings():
 
     llm_base_url = (os.getenv("LLM_BASE_URL") or settings.openai_base_url or "").lower()
 
+    dim_str = os.getenv("EMBEDDING_DIMENSIONS") or "1536"
+    dimensions_val = int(dim_str) if dim_str.isdigit() else 1536
+
+    # 构建 OpenAIEmbeddings 通用参数
+    # 1. 显式设置 check_embedding_ctx_length=False，避免向 DashScope 等三方网关发送 tiktoken 整数数组导致 400 异常
+    # 2. 限制单次批量大小 chunk_size <= 8，严格符合各云端 API (如 DashScope 限单次 <= 10 条) 批处理限制
+    extra_emb_kwargs = {
+        "check_embedding_ctx_length": False,
+        "chunk_size": 8,
+    }
+    # 若模型支持动态维度调整（如 text-embedding-v4 或 text-embedding-3-*），指定维度以严格对齐 Chroma 集合
+    if any(m in (emb_model or "").lower() for m in ["embedding-3", "embedding-v4"]):
+        extra_emb_kwargs["dimensions"] = dimensions_val
+
     # 如果显式配置了 EMBEDDING_BASE_URL，直接使用
     if emb_base_url:
         return OpenAIEmbeddings(
             model=emb_model,
             api_key=emb_api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "sk-placeholder",
             base_url=emb_base_url,
+            **extra_emb_kwargs,
         )
 
     # 如果当前主要 LLM 是 deepseek，而又没有单独指定 EMBEDDING_BASE_URL
@@ -36,7 +51,7 @@ def get_embeddings():
             "如需商用级在线语义检索，建议在 .env 中设置 EMBEDDING_BASE_URL 与 EMBEDDING_API_KEY (如 SiliconFlow/DashScope/OpenAI)。"
         )
         from langchain_core.embeddings import DeterministicFakeEmbedding
-        return DeterministicFakeEmbedding(size=1536)
+        return DeterministicFakeEmbedding(size=dimensions_val)
 
     api_key = (
         emb_api_key
@@ -50,6 +65,7 @@ def get_embeddings():
         model=emb_model,
         api_key=api_key,
         base_url=base_url,
+        **extra_emb_kwargs,
     )
 
 

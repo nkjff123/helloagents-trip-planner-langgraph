@@ -61,27 +61,21 @@ def load_pdf_file(file_path: Path, base_meta: Dict[str, Any]) -> List[Document]:
 
 
 def _extract_binary_doc_text(data: bytes) -> str:
-    """针对 Word 97-2003 二进制 .doc 提取中文与文本片段"""
+    """针对 Word 97-2003 二进制 .doc 提取中文与文本片段，严格过滤二进制杂乱字节避免乱码"""
     import re
-    chars = []
-    for i in range(0, len(data) - 1, 2):
-        chunk = data[i:i+2]
-        try:
-            ch = chunk.decode("utf-16le")
-            if "一" <= ch <= "鿿" or ch.isalnum() or ch in "，。！？、；：“”‘’（）《》【】\n\r\t ":
-                chars.append(ch)
-            else:
-                chars.append(" ")
-        except Exception:
-            chars.append(" ")
-    raw_text = "".join(chars)
-    raw_text = re.sub(r" {3,}", "\n", raw_text)
-    meaningful_lines = [
-        line.strip()
-        for line in raw_text.splitlines()
-        if len(line.strip()) > 8 and any("一" <= c <= "鿿" for c in line)
-    ]
-    return "\n".join(meaningful_lines)
+    # Word 97-2003 主要采用 UTF-16LE 存储中文文档流
+    decoded = data.decode("utf-16le", errors="ignore")
+    # 提取包含中文字符与常规标点的连贯文本段落（至少 6 个有效字符）
+    pattern = re.compile(r"[一-龥\w\s，。！？、；：“”‘’（）《》【】—\n\r\t]{6,}")
+    chunks = pattern.findall(decoded)
+    clean_lines = []
+    for c in chunks:
+        line = c.strip()
+        # 必须包含至少 2 个常用汉字，过滤纯数字、英文或杂质
+        hanzi_count = sum(1 for ch in line if "一" <= ch <= "龥")
+        if len(line) >= 6 and hanzi_count >= 2:
+            clean_lines.append(line)
+    return "\n".join(clean_lines)
 
 
 def load_doc_file(file_path: Path, base_meta: Dict[str, Any]) -> List[Document]:
