@@ -6,9 +6,14 @@
 
 ## 🌟 架构升级与核心特性
 
-本项目已全面升级为基于 **LangGraph** 的确定性与大模型推理分离架构，彻底清除了旧版中大模型经纬度幻觉、硬编码伪造数据兜底及脆弱的字符串正则工具调用，构建了高可靠性、真实实体锚定与精准预算交付闭环：
+本项目已全面升级为基于 **LangGraph** 的确定性与大模型推理分离架构，并全新集成了基于 **LangChain** 的旅游知识库对话式 RAG 助手，构建了从行程规划到即时咨询的完整闭环：
 
 - 🗺️ **真实实体锚定与还原 (Grounding & Rehydration)**: LLM 仅负责语义规划与日程编排，严格仅输出 `poi_id` 引用；真实经纬度坐标 (GCJ-02)、官方地址、门票与评分由确定性节点 100% 从高德真实候选池还原，杜绝任何地理位置漂移。
+- 📚 **权威旅游知识库与 Agentic RAG 助手 (全新)**:
+  - **文旅部官方权威底座**: 全量接入 `resource/tourism_knowledge_documents` 下 15 份官方文件（《中华人民共和国旅游法》、《旅游投诉处理办法》、《旅游安全实务手册》、旅游示范合同、景区/住宿/风景道行业标准），结合元数据精准溯源（法条名称、分类、年份与精确页码）。
+  - **Agentic 智能自适应检索**: 将知识库封装为 LangChain 标准 `@tool`，大模型自主判定提问意图——日常寒暄直接回复，法律维权/安全应急/合同规范自动调用检索工具获取权威依据。
+  - **当前行程上下文无缝联动**: 助手可自动感知用户正在浏览或规划的行程详情（城市、天数、POI 景点列表），提问时自动结合实际行程解答。
+  - **打字机实时流式响应 (SSE)**: 后端提供 Server-Sent Events 协议接口，前端常驻悬浮抽屉式组件，具备打字机逐字渲染、检索状态反馈与快捷提问气泡。
 - ⚡ **解耦并行检索与 Barrier 严格同步**: 搜索策略规划后扇出至三路独立检索（景点、酒店、餐厅）与天气查询，利用 LangGraph 边缘汇聚机制严格同步等待所有候选就绪。
 - 🛡️ **自愈修补循环与真实性强校验 (Self-Healing Loop)**: 规划结果必须通过真实候选池校验与经纬度零漂移校验；若未通过则携带定向错误反馈进入修补循环（最多 2 次），修补超限则显式拒绝，**绝不返回硬编码虚假数据**。
 - 💰 **确定性精准数学预算**: 门票、住宿、餐饮与交通预算由纯 Python 数学节点累加计算，确保 `total == sum(items)`，消除大模型算术失误。
@@ -111,11 +116,19 @@ helloagents-trip-planner-langgraph/
 │   │   │   ├── main.py                   # 启动入口与中间件配置
 │   │   │   └── routes/
 │   │   │       ├── trip.py               # /api/trip/plan 与 /api/trip/health
+│   │   │       ├── chat.py               # /api/chat/stream 与 /api/rag/status
 │   │   │       ├── map.py                # 地图服务路由
 │   │   │       └── poi.py                # POI 详情路由
 │   │   ├── models/                       # 数据模型层
 │   │   │   ├── schemas.py                # 请求/响应 Pydantic 模型
 │   │   │   └── state.py                  # 候选领域模型与 LangGraph 全局状态
+│   │   ├── rag/                          # LangChain RAG 知识库与对话智能体 (全新)
+│   │   │   ├── loader.py                 # 多格式解析 (PDF/Word/TXT/MD) 与元数据映射
+│   │   │   ├── splitter.py               # 递归字符分块与标题前缀增强
+│   │   │   ├── vector_store.py           # Chroma 向量数据库与智能模型降级
+│   │   │   ├── tools.py                  # LangChain @tool 知识检索工具
+│   │   │   ├── agent.py                  # Agentic RAG 流式生成与行程上下文感知
+│   │   │   └── ingest.py                 # 知识库增量构建与哈希缓存脚本
 │   │   ├── services/                     # 基础服务层
 │   │   │   ├── amap_service.py           # 高德地图 MCP 解析与候选映射封装
 │   │   │   ├── llm_service.py            # Pydantic 结构化输出支持与模型适配
@@ -129,28 +142,38 @@ helloagents-trip-planner-langgraph/
 │   │   │       ├── reasoning_nodes.py    # 策略规划、初筛、骨架编排与自愈修补
 │   │   │       └── postprocess_nodes.py  # 实体还原、路线丰富、精准预算与防篡改校验
 │   │   └── config.py                     # 全局配置管理
-│   ├── tests/                            # 自动化测试套件 (44 项单测与端到端测试)
+│   ├── tests/                            # 自动化测试套件 (69 项单测与端到端测试)
 │   │   ├── test_schemas.py               # 状态模型与 Reducer 测试
 │   │   ├── test_amap_parser.py           # 高德 MCP 解析与候选转换测试
 │   │   ├── test_deterministic_nodes.py   # 确定性后处理节点测试
 │   │   ├── test_search_nodes.py          # 检索与天气节点测试
 │   │   ├── test_reasoning_nodes.py       # LLM 推理节点测试
 │   │   ├── test_workflow_e2e.py          # LangGraph 完整端到端测试
-│   │   └── test_api_trip.py              # API 端点与兼容层测试
+│   │   ├── test_api_trip.py              # 旅行规划 API 端点测试
+│   │   ├── test_rag_config.py            # RAG 配置单元测试
+│   │   ├── test_rag_loader.py            # 多格式文档解析测试
+│   │   ├── test_rag_indexing.py          # 文本分块与哈希增量测试
+│   │   ├── test_rag_agent.py             # 检索工具与 Agentic RAG 测试
+│   │   └── test_api_chat.py              # 对话流式与状态接口测试
 │   ├── run.py                            # 后端运行脚本
 │   ├── requirements.txt                  # Python 依赖清单
 │   └── .env.example                      # 后端环境变量模板
 ├── frontend/                             # 前端应用源码
 │   ├── src/
-│   │   ├── components/                   # 公共组件 (地图、行程卡片等)
-│   │   ├── services/                     # Axios API 客户端
+│   │   ├── components/                   # 公共组件 (地图、行程卡片、ChatAssistant 悬浮助手等)
+│   │   ├── services/                     # API 客户端 (含 SSE 流式调用)
 │   │   ├── types/                        # 前后端对齐 TypeScript 接口定义
+│   │   ├── utils/                        # 工具函数 (导出、分页、trip、sse)
 │   │   └── views/
 │   │       ├── Home.vue                  # 旅行配置表单页
 │   │       └── Result.vue                # 规划成果展示、高德地图轨迹交互与导出页
+│   ├── tests/                            # 前端单元测试 (8 项测试)
 │   ├── package.json
 │   └── vite.config.ts
-├── memory-bank/                          # 系统设计与重构知识库
+├── resource/                             # 知识库资源目录
+│   ├── tourism_knowledge_documents/      # 15 份文旅部官方权威法规与标准文件
+│   └── tourism_kb_sources.json           # 知识库结构化元数据映射
+├── docs/                                 # 架构规范与实施计划文档
 └── README.md
 ```
 
@@ -208,6 +231,12 @@ LLM_API_KEY=sk-your-llm-api-key
 LLM_BASE_URL=https://api.deepseek.com/v1
 LLM_TIMEOUT=60
 
+# [可选] 独立 Embedding 向量模型配置 (如使用 SiliconFlow / DashScope / OpenAI / Ollama 等)
+# 若使用 DeepSeek 且不配置以下项，系统将自动使用安全的本地确定性向量降级，保证开箱即用
+# EMBEDDING_API_KEY=sk-your-embedding-key
+# EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
+# EMBEDDING_MODEL=BAAI/bge-m3
+
 # 高德地图 Web 服务 Key (必须申请 Web服务类型)
 AMAP_API_KEY=your_amap_web_service_key
 
@@ -218,7 +247,14 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 LOG_LEVEL=INFO
 ```
 
-#### 步骤 2.4：启动后端服务
+#### 步骤 2.4：一键构建/增量更新知识库向量索引 (Ingest)
+运行知识库摄取脚本，将 `resource/tourism_knowledge_documents` 下的 15 份文旅部官方文件解析切分并持久化写入 Chroma 向量库：
+```bash
+python -m app.rag.ingest
+```
+> **提示**：脚本内置 MD5 哈希增量比对机制，未修改的文件会自动秒级跳过，无需重复计算。
+
+#### 步骤 2.5：启动后端服务
 您可以通过以下任意一种方式启动后端服务：
 ```bash
 # 方式一：使用 uvicorn
@@ -231,12 +267,13 @@ python run.py
 - **Swagger UI 交互文档**: `http://localhost:8000/docs`
 - **ReDoc 文档**: `http://localhost:8000/redoc`
 - **工作流健康检查**: `http://localhost:8000/api/trip/health`
+- **知识库状态检查**: `http://localhost:8000/api/rag/status`
 
-#### 步骤 2.5：运行自动化测试 (可选，验证环境完整性)
+#### 步骤 2.6：运行自动化测试 (可选，验证环境完整性)
 ```bash
 python -m unittest discover
 ```
-预期输出：`Ran 44 tests ... OK`。
+预期输出：`Ran 69 tests in ... OK`。
 
 ---
 
@@ -302,6 +339,12 @@ npm run build
    - **每日日程明细**: 查看早中晚三餐安排、推荐景点官方地址与建议游玩时长、住宿酒店。
    - **费用明细**: 查看门票、住宿、餐饮与交通的精准数学汇总。
    - **导出计划**: 支持一键导出为高清长图或多页 PDF 文件，方便离线携带。
+
+4. **AI 旅游知识顾问对话交互 (RAG 实时问答)**:
+   - **一键唤起**: 无论在首页还是行程结果页，点击页面右下角带绿点标识的 **「AI 顾问」** 悬浮球，即可展开对话卡片。
+   - **文旅部官方知识库问答**: 您可以随时咨询旅游法规、合同纠纷维权、安全自救或景区标准（支持点击预置的快捷咨询气泡快速提问）。
+   - **当前行程背景联动**: 当您在前端生成或正在查看一份行程（如“杭州 3日游”）时，助手会自动感知顶部行程上下文并在提问时自动结合具体城市、天数和景点进行针对性解答。
+   - **流式打字机与状态反馈**: 后端基于 SSE 流式逐字吐出回答，并在检索官方知识库时提供“📚 正在查阅旅游知识库...”实时动态反馈。
 
 ---
 
