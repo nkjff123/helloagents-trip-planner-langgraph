@@ -1,5 +1,6 @@
 """Chroma 向量数据库管理模块"""
 
+import os
 from functools import lru_cache
 from typing import Optional
 from loguru import logger
@@ -13,10 +14,23 @@ COLLECTION_NAME = "travel_knowledge"
 def get_embeddings() -> OpenAIEmbeddings:
     """初始化 OpenAI 兼容 Embedding 模型"""
     settings = get_settings()
+    api_key = (
+        os.getenv("EMBEDDING_API_KEY")
+        or os.getenv("LLM_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or settings.openai_api_key
+        or "sk-placeholder"
+    )
+    base_url = (
+        os.getenv("EMBEDDING_BASE_URL")
+        or os.getenv("LLM_BASE_URL")
+        or settings.openai_base_url
+        or "https://api.openai.com/v1"
+    )
     return OpenAIEmbeddings(
         model=settings.embedding_model,
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url,
+        api_key=api_key,
+        base_url=base_url,
     )
 
 
