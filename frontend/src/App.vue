@@ -5,6 +5,7 @@ import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import { useRoute } from "vue-router";
 import AppIcon from "@/components/AppIcon.vue";
+import ChatAssistant from "@/components/ChatAssistant.vue";
 import "./styles.css";
 const route = useRoute();
 dayjs.locale("zh-cn");
@@ -57,6 +58,7 @@ const appTheme = {
       >
         <router-view />
       </main>
+      <ChatAssistant />
       <footer class="site-footer">HelloAgents · 智能旅行规划</footer>
     </div></a-config-provider
   >

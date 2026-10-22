@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type { TripFormData, TripPlanResponse } from '@/types'
+import { parseSSELine } from '@/utils/sse'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
@@ -65,6 +66,64 @@ export async function healthCheck(): Promise<any> {
   } catch (error: any) {
     console.error('健康检查失败:', error)
     throw new Error(error.message || '健康检查失败')
+  }
+}
+
+/**
+ * 流式发送聊天消息 (SSE)
+ */
+export async function streamChatMessage(
+  message: string,
+  conversationId: string,
+  tripContext: any,
+  onEvent: (event: any) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message,
+      conversation_id: conversationId,
+      current_trip_context: tripContext,
+    }),
+    signal,
+  })
+
+  if (!response.ok || !response.body) {
+    throw new Error(`请求失败: HTTP ${response.status}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n\n')
+    buffer = lines.pop() || ''
+
+    for (const line of lines) {
+      const parsed = parseSSELine(line)
+      if (parsed) {
+        onEvent(parsed)
+      }
+    }
+  }
+}
+
+/**
+ * 获取知识库状态
+ */
+export async function getRagStatus(): Promise<any> {
+  try {
+    const { data } = await apiClient.get('/api/rag/status')
+    return data
+  } catch (error: any) {
+    console.error('获取知识库状态失败:', error)
+    return { status: 'error', error: error.message }
   }
 }
 
