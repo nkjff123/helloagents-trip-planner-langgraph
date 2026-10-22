@@ -30,3 +30,14 @@ uv>=0.8.0
 # 其他工具
 python-dateutil>=2.8.2
 huggingface_hub>=0.25.0
+
+# LangChain 与 RAG 核心依赖
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+langchain-chroma>=0.1.4
+langchain-text-splitters>=0.3.0
+
+# 文档解析支持
+pypdf>=5.0.0
+docx2txt>=0.8

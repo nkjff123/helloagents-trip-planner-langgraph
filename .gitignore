@@ -52,5 +52,8 @@ Thumbs.db
 memory-bank/
 CLAUDE.md
 
+/resource
+backend/data/vector_store/
+.superpowers/
 
 

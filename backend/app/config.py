@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4"
 
+    # RAG 与 向量库配置
+    embedding_model: str = "text-embedding-3-small"
+    vector_store_dir: str = "data/vector_store"
+
     # 日志配置
     log_level: str = "INFO"
 
@@ -55,6 +59,11 @@ class Settings(BaseSettings):
     def get_cors_origins_list(self) -> List[str]:
         """获取CORS origins列表"""
         return [origin.strip() for origin in self.cors_origins.split(',')]
+
+    def get_vector_store_path(self) -> Path:
+        """获取向量数据库持久化目录路径"""
+        base_dir = Path(__file__).resolve().parent.parent
+        return base_dir / self.vector_store_dir
 
 
 # 创建全局配置实例
