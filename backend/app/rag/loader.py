@@ -60,26 +60,58 @@ def load_pdf_file(file_path: Path, base_meta: Dict[str, Any]) -> List[Document]:
     return docs
 
 
+def _extract_binary_doc_text(data: bytes) -> str:
+    """针对 Word 97-2003 二进制 .doc 提取中文与文本片段"""
+    import re
+    chars = []
+    for i in range(0, len(data) - 1, 2):
+        chunk = data[i:i+2]
+        try:
+            ch = chunk.decode("utf-16le")
+            if "一" <= ch <= "鿿" or ch.isalnum() or ch in "，。！？、；：“”‘’（）《》【】\n\r\t ":
+                chars.append(ch)
+            else:
+                chars.append(" ")
+        except Exception:
+            chars.append(" ")
+    raw_text = "".join(chars)
+    raw_text = re.sub(r" {3,}", "\n", raw_text)
+    meaningful_lines = [
+        line.strip()
+        for line in raw_text.splitlines()
+        if len(line.strip()) > 8 and any("一" <= c <= "鿿" for c in line)
+    ]
+    return "\n".join(meaningful_lines)
+
+
 def load_doc_file(file_path: Path, base_meta: Dict[str, Any]) -> List[Document]:
-    """使用 docx2txt 加载 DOC/DOCX 文本"""
-    if docx2txt is None:
-        logger.error("未安装 docx2txt，跳过 DOC 解析")
+    """使用 docx2txt 加载 DOC/DOCX 文本，若为老旧二进制 .doc 则降级通过字节流解析"""
+    text = ""
+    if docx2txt is not None:
+        try:
+            text = docx2txt.process(str(file_path)) or ""
+        except Exception:
+            text = ""
+
+    # 若 docx2txt 未解析出内容（如经典的 Word 97-2003 .doc），采用二进制文本提取
+    if not text.strip():
+        try:
+            raw_bytes = file_path.read_bytes()
+            text = _extract_binary_doc_text(raw_bytes)
+        except Exception as e:
+            logger.warning(f"二进制解析 DOC 失败 {file_path.name}: {e}")
+
+    text = text.strip()
+    if not text:
         return []
-    try:
-        text = docx2txt.process(str(file_path)) or ""
-        text = text.strip()
-        if not text:
-            return []
-        meta = {
-            **base_meta,
-            "source": base_meta.get("source", str(file_path)),
-            "file_name": file_path.name,
-            "page": 1,
-        }
-        return [Document(page_content=text, metadata=meta)]
-    except Exception as e:
-        logger.warning(f"解析 DOC 失败 {file_path.name}: {e}")
-        return []
+
+    meta = {
+        **base_meta,
+        "source": base_meta.get("source", str(file_path)),
+        "file_name": file_path.name,
+        "page": 1,
+    }
+    return [Document(page_content=text, metadata=meta)]
 
 
 def load_text_file(file_path: Path, base_meta: Dict[str, Any]) -> List[Document]:
