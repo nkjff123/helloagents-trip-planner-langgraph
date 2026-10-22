@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ..config import get_settings, validate_config, print_config
-from .routes import trip, poi, map as map_routes
+from .routes import trip, poi, chat, map as map_routes
 
 # 获取配置
 settings = get_settings()
@@ -64,6 +64,8 @@ app.add_middleware(
 app.include_router(trip.router, prefix="/api")
 app.include_router(poi.router, prefix="/api")
 app.include_router(map_routes.router, prefix="/api")
+app.include_router(chat.router, prefix="/api/chat", tags=["AI 智能助手与 RAG 问答"])
+app.include_router(chat.router, prefix="/api/rag", tags=["RAG 状态与管理"])
 
 
 @app.get("/")
